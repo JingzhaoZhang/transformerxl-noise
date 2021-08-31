@@ -62,7 +62,7 @@ parser.add_argument('--optim', default='adam', type=str,
                     help='optimizer to use.')
 parser.add_argument('--lr', type=float, default=0.00025,
                     help='initial learning rate (0.00025|5 for adam|sgd)')
-parser.add_argument('--mom', type=float, default=0.9,
+parser.add_argument('--mom', type=float, default=0.0,
                     help='momentum for sgd')
 parser.add_argument('--scheduler', default='cosine', type=str,
                     choices=['cosine', 'inv_sqrt', 'dev_perf', 'constant'],
@@ -158,6 +158,7 @@ parser.add_argument('-noise_size', type=int, default=100)
 parser.add_argument('-save_sharpness', action='store_true')
 parser.add_argument('-sharpness_per_iter', type=int, default=500)
 parser.add_argument('-sharpness_batches', type=int, default=20)
+parser.add_argument('-train_step', type=int, default=1000)
 
 
 
@@ -551,32 +552,23 @@ def train(cur_loss):
     for batch, (data, target, seq_len) in enumerate(train_iter):
         model.zero_grad()
         
-        if args.save_sharpness and (batch % args.sharpness_per_iter == 0):
-            print("Saving sharpness")
-            sharpness, mems = eigen_hessian(para_model, train_iter, args.sharpness_batches, mems)
-            weight_names, weights = param_weights(para_model)
-            weights_str = ['%4.4f' % w for w in weights]
-            with open(log_valid_file, 'a') as log_vf:
-#                 log_tf.write('{epoch},{loss: 8.5f},{gradnorm:3.3f},{sto_grad_norm:3.3f},{noisenorm:3.3f}\n'.format(
-#                     epoch=train_step, loss=cur_loss,
-#                     gradnorm=true_gradnorm, sto_grad_norm=sto_grad_norm, noisenorm=sto_noise_norm))
-                log_vf.write('{epoch},{sharpness: 8.5f},'.format(epoch=train_step, sharpness=sharpness) + ','.join(weights_str) + '\n')     
-        
-        if args.save_noise and (batch % args.noise_per_iter == 0):
-            print("Saving noise level")
-            true_gradnorm, sto_grad_norm, sto_noise_norm = 0,0,0
-            noise_sq, stograd_sq, true_gradnorm, mems = compute_sto_grad_norm(mems, train_iter)
-            sto_grad_norm = np.mean(stograd_sq)
-            sto_noise_norm = np.mean(noise_sq)
-        
 
-            with open(log_train_file, 'a') as log_tf, open(log_valid_file, 'a') as log_vf:
-                log_tf.write('{epoch},{loss: 8.5f},{gradnorm:3.3f},{sto_grad_norm:3.3f},{noisenorm:3.3f}\n'.format(
-                    epoch=train_step, loss=cur_loss,
-                    gradnorm=true_gradnorm, sto_grad_norm=sto_grad_norm, noisenorm=sto_noise_norm))
-#                 log_vf.write('{epoch},{loss: 8.5f}\n'.format(
-#                     epoch=train_step, loss=val_loss,
-#                     ))     
+        if train_step == args.train_step:
+            for bs in [50, 100, 200, 400, 800]:
+                args.noise_size = bs
+                if args.save_noise and (batch % args.noise_per_iter == 0):
+                    print("Saving noise level")
+                    true_gradnorm, sto_grad_norm, sto_noise_norm = 0,0,0
+                    noise_sq, stograd_sq, true_gradnorm, mems = compute_sto_grad_norm(mems, train_iter)
+                    sto_grad_norm = np.mean(stograd_sq)
+                    sto_noise_norm = np.mean(noise_sq)
+
+
+                    with open(log_train_file, 'a') as log_tf, open(log_valid_file, 'a') as log_vf:
+                        log_tf.write('{epoch},{loss: 8.5f},{gradnorm:3.3f},{sto_grad_norm:3.3f},{noisenorm:3.3f}, {batch:3.3f}\n'.format(
+                            epoch=train_step, loss=cur_loss,
+                            gradnorm=true_gradnorm, sto_grad_norm=sto_grad_norm, noisenorm=sto_noise_norm, batch=float(bs)))
+            break
 
 
         if args.batch_chunk > 1:
