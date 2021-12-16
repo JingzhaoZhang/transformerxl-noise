@@ -163,7 +163,7 @@ class RelMultiHeadAttn(nn.Module):
         self.pre_lnorm = pre_lnorm
 
     def _parallelogram_mask(self, h, w, left=False):
-        mask = torch.ones((h, w)).byte()
+        mask = torch.ones((h, w)).bool()
         m = min(h, w)
         mask[:m,:m] = torch.triu(mask[:m,:m])
         mask[-m:,-m:] = torch.tril(mask[-m:,-m:])
@@ -654,10 +654,10 @@ class MemTransformerLM(nn.Module):
             else:
                 mask_shift_len = qlen
             dec_attn_mask = (torch.triu(all_ones, 1+mlen)
-                    + torch.tril(all_ones, -mask_shift_len)).byte()[:, :, None] # -1
+                    + torch.tril(all_ones, -mask_shift_len)).bool()[:, :, None] # -1
         else:
             dec_attn_mask = torch.triu(
-                word_emb.new_ones(qlen, klen), diagonal=1+mlen).byte()[:,:,None]
+                word_emb.new_ones(qlen, klen), diagonal=1+mlen).bool()[:,:,None]
 
         hids = []
         if self.attn_type == 0: # default
@@ -751,8 +751,8 @@ class MemTransformerLM(nn.Module):
                 self.out_layer.bias, target, pred_hid, self.sampler)
             loss = -F.log_softmax(logit, -1)[:, :, 0]
         else:
-            loss = self.crit(pred_hid.view(-1, pred_hid.size(-1)), target.view(-1))
-            loss = loss.view(tgt_len, -1)
+            loss = self.crit(pred_hid.contiguous().view(-1, pred_hid.size(-1)), target.contiguous().view(-1))
+            loss = loss.contiguous().view(tgt_len, -1)
 
         if new_mems is None:
             return [loss]

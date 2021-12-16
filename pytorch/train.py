@@ -4,6 +4,15 @@ import time
 import math
 import os, sys
 import itertools
+import warnings
+
+def warn_with_traceback(message, category, filename, lineno, file=None, line=None):
+
+    log = file if hasattr(file,'write') else sys.stderr
+    traceback.print_stack(file=log)
+    log.write(warnings.formatwarning(message, category, filename, lineno, line))
+
+warnings.showwarning = warn_with_traceback
 
 import numpy as np
 import errno
@@ -148,12 +157,13 @@ parser.add_argument('--static-loss-scale', type=float, default=1,
 parser.add_argument('--dynamic-loss-scale', action='store_true',
                     help='Use dynamic loss scaling.  If supplied, this argument'
                     ' supersedes --static-loss-scale.')
+
+
 parser.add_argument('-save_noise', action='store_true')
 parser.add_argument('-noise_per_iter', type=int, default=500)
-parser.add_argument('-save_noise_iter', action='store_true')
 parser.add_argument('--save-dir', type=str,  default='default',
                     help='path to save the final model')
-parser.add_argument('-noise_size', type=int, default=100)
+parser.add_argument('-noise_size', type=int, default=800)
 
 parser.add_argument('-save_sharpness', action='store_true')
 parser.add_argument('-sharpness_per_iter', type=int, default=500)
@@ -534,6 +544,7 @@ def compute_sto_grad_norm(mems, train_iter):
         if train_step == args.max_step or batch == args.noise_size - 1:
             break
         
+        
     optimizer.zero_grad()
     return noise_sq, stograd_sq, gradnorm_sq, mems
 
@@ -548,22 +559,21 @@ def train(cur_loss):
         mems = tuple()
     train_iter = tr_iter.get_varlen_iter() if args.varlen else tr_iter.get_fixlen_iter()
 #     cur_loss = 0
+    print("start training")
     for batch, (data, target, seq_len) in enumerate(train_iter):
         model.zero_grad()
-        
+
         if args.save_sharpness and (batch % args.sharpness_per_iter == 0):
-            print("Saving sharpness")
+            logging("Saving sharpness")
             sharpness, mems = eigen_hessian(para_model, train_iter, args.sharpness_batches, mems)
             weight_names, weights = param_weights(para_model)
             weights_str = ['%4.4f' % w for w in weights]
             with open(log_valid_file, 'a') as log_vf:
-#                 log_tf.write('{epoch},{loss: 8.5f},{gradnorm:3.3f},{sto_grad_norm:3.3f},{noisenorm:3.3f}\n'.format(
-#                     epoch=train_step, loss=cur_loss,
-#                     gradnorm=true_gradnorm, sto_grad_norm=sto_grad_norm, noisenorm=sto_noise_norm))
                 log_vf.write('{epoch},{sharpness: 8.5f},'.format(epoch=train_step, sharpness=sharpness) + ','.join(weights_str) + '\n')     
         
+        
         if args.save_noise and (batch % args.noise_per_iter == 0):
-            print("Saving noise level")
+            logging("Saving noise")
             true_gradnorm, sto_grad_norm, sto_noise_norm = 0,0,0
             noise_sq, stograd_sq, true_gradnorm, mems = compute_sto_grad_norm(mems, train_iter)
             sto_grad_norm = np.mean(stograd_sq)
@@ -574,9 +584,7 @@ def train(cur_loss):
                 log_tf.write('{epoch},{loss: 8.5f},{gradnorm:3.3f},{sto_grad_norm:3.3f},{noisenorm:3.3f}\n'.format(
                     epoch=train_step, loss=cur_loss,
                     gradnorm=true_gradnorm, sto_grad_norm=sto_grad_norm, noisenorm=sto_noise_norm))
-#                 log_vf.write('{epoch},{loss: 8.5f}\n'.format(
-#                     epoch=train_step, loss=val_loss,
-#                     ))     
+
 
 
         if args.batch_chunk > 1:
@@ -593,6 +601,7 @@ def train(cur_loss):
                 else:
                     loss.backward()
                 train_loss += loss.float().item()
+
         else:
             ret = para_model(data, target, *mems)
             loss, mems = ret[0], ret[1:]
@@ -712,20 +721,15 @@ with open(log_train_file, 'w') as log_tf, open(log_valid_file, 'w') as log_vf:
 # At any point you can hit Ctrl + C to break out of training early.
 cur_loss = 0
 for epoch in itertools.count(start=1):
-    try:
-        cur_loss = train(cur_loss)
-        test_loss = evaluate(te_iter)
 
-        if train_step == args.max_step:
-            logging('-' * 100)
-            logging('End of training')
-            break
-    except KeyboardInterrupt:
+    cur_loss = train(cur_loss)
+    test_loss = evaluate(te_iter)
+
+    if train_step == args.max_step:
         logging('-' * 100)
-        logging('Exiting from training early')
+        logging('End of training')
         break
-    except StopIteration:
-        continue
+
  
 
 # Load the best saved model.
